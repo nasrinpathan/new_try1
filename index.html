@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Create/Update & Deploy Demo</title>
+</head>
+<body>
+  <h1>Browser-based GitHub Repo, File & Deployment Manager</h1>
+
+  <!-- Inputs -->
+  <input id="owner" type="text" placeholder="Repo owner (e.g. nasrinpathan)">
+  <input id="repo" type="text" placeholder="Repo name (e.g. new123)">
+  <input id="branch" type="text" placeholder="Branch (e.g. main)">
+  <input id="filename" type="text" placeholder="Enter filename (e.g. index.html)">
+  <br><br>
+
+  <!-- Editor -->
+  <textarea id="editor" rows="10" cols="50">
+<!DOCTYPE html><html><body><h1>Hello from Browser!</h1></body></html>
+  </textarea>
+  <br>
+
+  <!-- File Upload -->
+  <input id="fileInput" type="file">
+  <br><br>
+
+  <button onclick="createUpdateDeploy()">Create/Update & Deploy</button>
+
+  <script>
+    function encodeContent(str) {
+      return btoa(unescape(encodeURIComponent(str))); // UTF-8 safe
+    }
+
+    async function createUpdateDeploy() {
+      const token = prompt("Enter your GitHub token:");
+      const owner = document.getElementById("owner").value.trim();
+      const repo = document.getElementById("repo").value.trim();
+      const branch = document.getElementById("branch").value.trim() || "main";
+      const path = document.getElementById("filename").value.trim();
+
+      if (!owner || !repo || !path) {
+        alert("Please enter owner, repo, and filename.");
+        return;
+      }
+
+      // Check repo exists
+      const repoUrl = `https://api.github.com/repos/${owner}/${repo}`;
+      let repoResponse = await fetch(repoUrl, { headers: { Authorization: `token ${token}` } });
+      if (repoResponse.status === 404) {
+        const createResponse = await fetch(`https://api.github.com/user/repos`, {
+          method: "POST",
+          headers: { Authorization: `token ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ name: repo, private: false, auto_init: true })
+        });
+        const createResult = await createResponse.json();
+        if (!createResult.id) { alert("Error creating repo"); console.log(createResult); return; }
+        alert(`Repo ${repo} created successfully!`);
+      }
+
+      // Check if file exists
+      const fileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`;
+      let fileSha = null;
+      const fileResponse = await fetch(fileUrl, { headers: { Authorization: `token ${token}` } });
+      if (fileResponse.status === 200) {
+        const fileData = await fileResponse.json();
+        fileSha = fileData.sha;
+      }
+
+      // Decide content source: textarea or uploaded file
+      let newContent;
+      const fileInput = document.getElementById("fileInput");
+      if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        const arrayBuffer = await file.arrayBuffer();
+        const binaryString = String.fromCharCode(...new Uint8Array(arrayBuffer));
+        newContent = btoa(binaryString); // base64 encode raw file
+      } else {
+        newContent = encodeContent(document.getElementById("editor").value);
+      }
+
+      // Commit file
+      const body = {
+        message: fileSha ? `Update ${path} via browser` : `Create ${path} via browser`,
+        content: newContent,
+        branch: branch
+      };
+      if (fileSha) body.sha = fileSha;
+
+      const putUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+      const commitResponse = await fetch(putUrl, {
+        method: "PUT",
+        headers: { Authorization: `token ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const result = await commitResponse.json();
+      console.log(result);
+      if (!result.content) { alert(`Error committing file: ${result.message}`); return; }
+
+      alert(`File ${path} ${fileSha ? "updated" : "created"} in ${owner}/${repo}!`);
+
+      // Configure GitHub Pages
+      const pagesResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/pages`, {
+        method: "POST",
+        headers: { Authorization: `token ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ source: { branch: branch, path: "/" } })
+      });
+      const pagesResult = await pagesResponse.json();
+      console.log(pagesResult);
+
+      alert(`Deployment triggered! Check: https://${owner}.github.io/${repo}/`);
+    }
+  </script>
+</body>
+</html>
